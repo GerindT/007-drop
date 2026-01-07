@@ -54,6 +54,15 @@ export default defineEventHandler(async (event) => {
       })
     }
     
+    // Check for webhook URL
+    const webhookUrlField = formData.find(field => field.name === 'webhookUrl')
+    let webhookUrl = webhookUrlField?.data?.toString() || null
+    
+    // Basic validation for webhook URL
+    if (webhookUrl && !webhookUrl.startsWith('http')) {
+      webhookUrl = null
+    }
+
     // Generate unique ID for this file
     const fileId = randomUUID()
     const deleteToken = randomUUID()
@@ -112,7 +121,8 @@ export default defineEventHandler(async (event) => {
         is_password_protected: isPasswordProtected,
         password_salt: passwordSalt,
         has_preview: hasPreview,
-        delete_token: deleteToken
+        delete_token: deleteToken,
+        webhook_url: webhookUrl
       })
     
     if (dbError) {

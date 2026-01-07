@@ -118,6 +118,38 @@
           </div>
         </div>
 
+        <!-- Notification Options -->
+        <div class="notification-section mt-4">
+          <button class="btn-text text-sm flex items-center gap-1" @click="showAdvanced = !showAdvanced">
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" :class="{ 'rotate-180': showAdvanced }" class="transition-transform">
+              <polyline points="6 9 12 15 18 9"/>
+            </svg>
+            {{ showAdvanced ? 'Hide Options' : 'More Options' }}
+          </button>
+          
+          <div v-if="showAdvanced" class="mt-2 fade-in">
+            <label class="password-label">
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M18 8a6 6 0 0 0-9.33-5"/>
+                <line x1="1" x2="23" y1="1" y2="23"/>
+                <path d="M13.73 21a2 2 0 0 1-3.46 0"/>
+                <path d="M6 9v3c0 1.1-.9 2-2 2s-2-.9-2-2V9"/>
+                <path d="M22 9v3c0 1.1-.9 2-2 2s-2-.9-2-2V9"/>
+              </svg>
+              Discord/Slack Webhook URL (Optional)
+            </label>
+            <input 
+              v-model="webhookUrl"
+              type="url"
+              class="input mt-1"
+              placeholder="https://discord.com/api/webhooks/..."
+            />
+            <p class="password-hint text-muted">
+              Receive a notification when your file is downloaded.
+            </p>
+          </div>
+        </div>
+
         <button class="btn btn-primary w-full mt-4" @click="startEncryptAndUpload">
           <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
@@ -308,6 +340,8 @@ const password = ref('')
 const downloadLimit = ref(1)
 const showQr = ref(false)
 const qrCanvas = ref(null)
+const webhookUrl = ref('')
+const showAdvanced = ref(false)
 
 // Download limit options
 const downloadLimitOptions = [
@@ -453,6 +487,11 @@ async function startEncryptAndUpload() {
     // Add download limit (0 = unlimited)
     formData.append('downloadLimit', downloadLimit.value.toString())
     
+    // Add webhook URL
+    if (webhookUrl.value) {
+      formData.append('webhookUrl', webhookUrl.value)
+    }
+    
     // Step 4: Upload encrypted blob via API
     console.log('Sending upload request...')
     const response = await fetch('/api/upload', {
@@ -562,6 +601,8 @@ function reset() {
   password.value = ''
   downloadLimit.value = 1
   showQr.value = false
+  webhookUrl.value = ''
+  showAdvanced.value = false
   if (fileInput.value) fileInput.value.value = ''
 }
 

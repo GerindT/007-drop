@@ -59,6 +59,18 @@ export default defineEventHandler(async (event) => {
     if (updateError) {
       console.error('Failed to update download count:', updateError)
     }
+
+    // Fire webhook if configured (fire and forget)
+    if (file.webhook_url) {
+      const remaining = file.download_limit > 0 ? file.download_limit - (file.download_count + 1) : 'Unlimited'
+      fetch(file.webhook_url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          content: `🚀 **File Downloaded!**\n\nYour drop **${file.original_name}** has been accessed.\nDownloads: ${file.download_count + 1}/${file.download_limit === 0 ? '∞' : file.download_limit}\nRemaining: ${remaining}`
+        })
+      }).catch(err => console.error('Webhook failed:', err))
+    }
     
     // Generate signed URL for download (valid for 5 minutes)
     const { data: signedUrlData, error: signedUrlError } = await supabase.storage
