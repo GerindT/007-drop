@@ -16,7 +16,8 @@
       <!-- Ready State -->
       <div v-else-if="status === 'ready'" class="download-content text-center">
         <div class="file-preview">
-          <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <img v-if="previewSrc" :src="previewSrc" class="preview-image" alt="File preview" />
+          <svg v-else xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
             <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/>
             <path d="M14 2v4a2 2 0 0 0 2 2h4"/>
           </svg>
@@ -168,6 +169,7 @@ const encryptionKey = ref(null)
 const statusText = ref('')
 const password = ref('')
 const passwordError = ref('')
+const previewSrc = ref(null)
 
 // Format file size
 function formatSize(bytes) {
@@ -207,11 +209,30 @@ onMounted(async () => {
     
     fileInfo.value = await response.json()
     status.value = 'ready'
+    
+    // Load preview if available and not password protected
+    if (fileInfo.value.hasPreview && !fileInfo.value.isPasswordProtected) {
+      loadPreview()
+    }
   } catch (err) {
     console.error('Error fetching file:', err)
     status.value = 'expired'
   }
 })
+
+// Load preview
+async function loadPreview() {
+  try {
+    const response = await fetch(`/api/preview/${fileId}`)
+    if (!response.ok) return
+    
+    const encryptedData = await response.arrayBuffer()
+    const decryptedBlob = await decryptFile(encryptedData, encryptionKey.value, 'image/jpeg')
+    previewSrc.value = URL.createObjectURL(decryptedBlob)
+  } catch (err) {
+    console.warn('Preview load failed', err)
+  }
+}
 
 // Download and decrypt file
 async function download() {
@@ -336,6 +357,13 @@ async function download() {
   background: var(--bg-tertiary);
   border-radius: var(--radius-lg);
   color: var(--accent-gold);
+  overflow: hidden;
+}
+
+.preview-image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 .file-size {

@@ -58,6 +58,10 @@ export default defineEventHandler(async (event) => {
     const fileId = randomUUID()
     const storagePath = `drops/${fileId}`
     
+    // Check for thumbnail
+    const thumbnailField = formData.find(field => field.name === 'thumbnail')
+    const hasPreview = !!thumbnailField
+    
     // Upload to Supabase Storage
     const { error: uploadError } = await supabase.storage
       .from('drops')
@@ -74,7 +78,23 @@ export default defineEventHandler(async (event) => {
       })
     }
     
+    // Upload thumbnail if present
+    if (hasPreview && thumbnailField?.data) {
+      const { error: thumbError } = await supabase.storage
+        .from('drops')
+        .upload(`${storagePath}-preview`, thumbnailField.data, {
+          contentType: 'application/octet-stream',
+          upsert: false
+        })
+        
+      if (thumbError) {
+        console.warn('Thumbnail upload failed:', thumbError)
+        // Continue without preview, just log it
+      }
+    }
+    
     // Create database record
+    console.log('Inserting file record into DB:', { id: fileId, originalName, downloadLimit, hasPreview })
     const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000) // 24 hours
     
     const { error: dbError } = await supabase
@@ -89,18 +109,25 @@ export default defineEventHandler(async (event) => {
         download_count: 0,
         expires_at: expiresAt.toISOString(),
         is_password_protected: isPasswordProtected,
-        password_salt: passwordSalt
+        password_salt: passwordSalt,
+        has_preview: hasPreview
       })
     
     if (dbError) {
-      // Rollback: delete uploaded file
+      // Rollback: delete uploaded file and thumbnail
+      console.error('Database insert failed:', dbError)
       await supabase.storage.from('drops').remove([storagePath])
-      console.error('Database insert error:', dbError)
+      if (hasPreview) {
+        await supabase.storage.from('drops').remove([`${storagePath}-preview`])
+      }
+      
       throw createError({
         statusCode: 500,
-        message: 'Failed to create file record'
+        message: 'Failed to create file record: ' + dbError.message
       })
     }
+    
+    console.log('Upload successful for file:', fileId)
     
     return {
       id: fileId,

@@ -57,7 +57,8 @@ export default defineEventHandler(async (event) => {
       downloadsRemaining: file.download_limit === 0 ? -1 : file.download_limit - file.download_count,
       isUnlimited: file.download_limit === 0,
       isPasswordProtected: file.is_password_protected || false,
-      passwordSalt: file.password_salt || null
+      passwordSalt: file.password_salt || null,
+      hasPreview: file.has_preview || false
     }
     
   } catch (err) {

@@ -44,6 +44,7 @@
           ref="fileInput"
           type="file"
           hidden
+          multiple
           @change="handleFileSelect"
         />
       </div>
@@ -58,8 +59,14 @@
             </svg>
           </div>
           <div class="file-details">
-            <p class="file-name">{{ selectedFile?.name }}</p>
-            <p class="file-size text-muted">{{ formatSize(selectedFile?.size || 0) }}</p>
+            <template v-if="selectedFiles.length === 1">
+              <p class="file-name">{{ selectedFiles[0].name }}</p>
+              <p class="file-size text-muted">{{ formatSize(selectedFiles[0].size) }}</p>
+            </template>
+            <template v-else>
+              <p class="file-name">{{ selectedFiles.length }} files selected</p>
+              <p class="file-size text-muted">{{ formatSize(selectedFiles.reduce((acc, f) => acc + f.size, 0)) }}</p>
+            </template>
           </div>
           <button class="btn btn-icon btn-secondary" @click="reset" title="Remove file">
             <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -131,8 +138,14 @@
             </svg>
           </div>
           <div class="file-details">
-            <p class="file-name">{{ selectedFile?.name }}</p>
-            <p class="file-size text-muted">{{ formatSize(selectedFile?.size || 0) }}</p>
+            <template v-if="selectedFiles.length === 1">
+              <p class="file-name">{{ selectedFiles[0].name }}</p>
+              <p class="file-size text-muted">{{ formatSize(selectedFiles[0].size) }}</p>
+            </template>
+            <template v-else>
+              <p class="file-name">{{ selectedFiles.length }} files selected</p>
+              <p class="file-size text-muted">{{ formatSize(selectedFiles.reduce((acc, f) => acc + f.size, 0)) }}</p>
+            </template>
           </div>
         </div>
         
@@ -154,7 +167,7 @@
         </div>
         
         <h2>File Ready</h2>
-        <p class="text-muted mb-3">Share this link. It will self-destruct after 1 download.</p>
+        <p class="text-muted mb-3">Share this link or scan the QR code.</p>
         
         <div class="link-box">
           <code>{{ shareUrl }}</code>
@@ -167,6 +180,30 @@
             </svg>
           </button>
         </div>
+
+        <!-- QR Code -->
+        <div class="qr-section">
+          <button class="qr-toggle" @click="showQr = !showQr">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect width="5" height="5" x="3" y="3" rx="1"/>
+              <rect width="5" height="5" x="16" y="3" rx="1"/>
+              <rect width="5" height="5" x="3" y="16" rx="1"/>
+              <path d="M21 16h-3a2 2 0 0 0-2 2v3"/>
+              <path d="M21 21v.01"/>
+              <path d="M12 7v3a2 2 0 0 1-2 2H7"/>
+              <path d="M3 12h.01"/>
+              <path d="M12 3h.01"/>
+              <path d="M12 16v.01"/>
+              <path d="M16 12h1"/>
+              <path d="M21 12v.01"/>
+              <path d="M12 21v-1"/>
+            </svg>
+            {{ showQr ? 'Hide QR Code' : 'Show QR Code' }}
+          </button>
+          <div v-if="showQr" class="qr-container">
+            <canvas ref="qrCanvas"></canvas>
+          </div>
+        </div>
         
         <div class="badges mt-3">
           <span class="badge badge-warning">
@@ -177,9 +214,11 @@
           </span>
           <span class="badge badge-success">
             <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10"/>
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+              <polyline points="7 10 12 15 17 10"/>
+              <line x1="12" x2="12" y1="15" y2="3"/>
             </svg>
-            1 download remaining
+            {{ downloadLimit === 0 ? 'Unlimited downloads' : `${downloadLimit} download${downloadLimit === 1 ? '' : 's'}` }}
           </span>
         </div>
         
@@ -216,6 +255,8 @@
 
 <script setup>
 import { useClipboard } from '@vueuse/core'
+import QRCode from 'qrcode'
+import JSZip from 'jszip'
 import { 
   generateKey, 
   keyToBase64, 
@@ -229,7 +270,7 @@ import {
 // State
 const state = ref('idle') // idle | ready | uploading | success | error
 const isDragging = ref(false)
-const selectedFile = ref(null)
+const selectedFiles = ref([])
 const uploadProgress = ref(0)
 const shareUrl = ref('')
 const errorMessage = ref('')
@@ -237,6 +278,8 @@ const fileInput = ref(null)
 const statusText = ref('')
 const password = ref('')
 const downloadLimit = ref(1)
+const showQr = ref(false)
+const qrCanvas = ref(null)
 
 // Download limit options
 const downloadLimitOptions = [
@@ -265,42 +308,62 @@ function openFilePicker() {
 
 // Handle file selection - go to ready state for password input
 function handleFileSelect(event) {
-  const file = event.target.files?.[0]
-  if (file) selectFile(file)
+  const files = Array.from(event.target.files || [])
+  if (files.length > 0) selectFiles(files)
 }
 
 // Handle drop
 function handleDrop(event) {
   isDragging.value = false
-  const file = event.dataTransfer.files?.[0]
-  if (file) selectFile(file)
+  const files = Array.from(event.dataTransfer.files || [])
+  if (files.length > 0) selectFiles(files)
 }
 
-// Select file and show ready state
-function selectFile(file) {
-  // Validate file size (50MB max)
+// Select files and show ready state
+function selectFiles(files) {
+  // Validate total file size (50MB max)
   const maxSize = 50 * 1024 * 1024
-  if (file.size > maxSize) {
+  const totalSize = files.reduce((acc, file) => acc + file.size, 0)
+  
+  if (totalSize > maxSize) {
     state.value = 'error'
-    errorMessage.value = 'File size exceeds 50MB limit.'
+    errorMessage.value = 'Total size exceeds 50MB limit.'
     return
   }
   
-  selectedFile.value = file
+  selectedFiles.value = files
   password.value = ''
   state.value = 'ready'
 }
 
 // Start encrypt and upload
 async function startEncryptAndUpload() {
-  if (!selectedFile.value) return
+  if (selectedFiles.value.length === 0) return
   
-  const file = selectedFile.value
   state.value = 'uploading'
   uploadProgress.value = 0
-  statusText.value = 'Generating encryption key...'
+  
+  let fileToEncrypt = null
   
   try {
+    // Step 0: Handle multiple files (ZIP) or single file
+    if (selectedFiles.value.length > 1) {
+      statusText.value = 'Zipping files...'
+      const zip = new JSZip()
+      
+      for (const file of selectedFiles.value) {
+        zip.file(file.name, file)
+      }
+      
+      const blob = await zip.generateAsync({ type: 'blob' })
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-')
+      fileToEncrypt = new File([blob], `archive-${timestamp}.zip`, { type: 'application/zip' })
+    } else {
+      fileToEncrypt = selectedFiles.value[0]
+    }
+
+    statusText.value = 'Generating encryption key...'
+
     // Step 1: Generate encryption key
     let key = await generateKey()
     let keyBase64 = await keyToBase64(key)
@@ -322,7 +385,7 @@ async function startEncryptAndUpload() {
     statusText.value = 'Encrypting file...'
     
     // Step 2: Encrypt the file in browser
-    const encryptedData = await encryptFile(file, key)
+    const encryptedData = await encryptFile(fileToEncrypt, key)
     
     uploadProgress.value = 40
     statusText.value = 'Uploading encrypted file...'
@@ -332,10 +395,26 @@ async function startEncryptAndUpload() {
     
     // Create FormData with encrypted file
     const formData = new FormData()
-    formData.append('file', encryptedBlob, file.name + '.encrypted')
-    formData.append('originalName', file.name)
-    formData.append('originalSize', file.size.toString())
-    formData.append('originalType', file.type)
+    formData.append('file', encryptedBlob, fileToEncrypt.name + '.encrypted')
+    formData.append('originalName', fileToEncrypt.name)
+    formData.append('originalSize', fileToEncrypt.size.toString())
+    formData.append('originalType', fileToEncrypt.type)
+    
+    // Generate and encrypt thumbnail for single images
+    if (selectedFiles.value.length === 1 && fileToEncrypt.type.startsWith('image/')) {
+      try {
+        statusText.value = 'Generating preview...'
+        const thumbnailBlob = await generateThumbnail(fileToEncrypt)
+        if (thumbnailBlob) {
+          const encryptedThumbnail = await encryptFile(new File([thumbnailBlob], 'thumb'), key)
+          const encryptedThumbBlob = new Blob([encryptedThumbnail], { type: 'application/octet-stream' })
+          formData.append('thumbnail', encryptedThumbBlob, 'thumbnail.encrypted')
+        }
+      } catch (err) {
+        console.warn('Thumbnail generation failed:', err)
+        // Continue anyway
+      }
+    }
     
     // Add password protection flag and salt
     if (password.value && saltBase64) {
@@ -347,11 +426,13 @@ async function startEncryptAndUpload() {
     formData.append('downloadLimit', downloadLimit.value.toString())
     
     // Step 4: Upload encrypted blob via API
+    console.log('Sending upload request...')
     const response = await fetch('/api/upload', {
       method: 'POST',
       body: formData
     })
     
+    console.log('Upload response received:', response.status)
     uploadProgress.value = 80
     
     if (!response.ok) {
@@ -360,6 +441,7 @@ async function startEncryptAndUpload() {
     }
     
     const data = await response.json()
+    console.log('Upload successful:', data)
     
     uploadProgress.value = 100
     statusText.value = 'Done!'
@@ -380,17 +462,91 @@ function copyLink() {
   copy(shareUrl.value)
 }
 
+// Generate QR Code
+async function generateQrCode() {
+  if (!shareUrl.value || !qrCanvas.value) return
+  
+  try {
+    await QRCode.toCanvas(qrCanvas.value, shareUrl.value, {
+      width: 200,
+      margin: 2,
+      color: {
+        dark: '#000000',
+        light: '#ffffff'
+      }
+    })
+  } catch (err) {
+    console.error('QR Generation error:', err)
+  }
+}
+
+// Watch for QR toggle
+watch(showQr, async (newValue) => {
+  if (newValue) {
+    // Wait for canvas to be mounted
+    await nextTick()
+    generateQrCode()
+  }
+})
+
 // Reset to initial state
 function reset() {
   state.value = 'idle'
-  selectedFile.value = null
+  selectedFiles.value = []
   uploadProgress.value = 0
   shareUrl.value = ''
   errorMessage.value = ''
   statusText.value = ''
   password.value = ''
   downloadLimit.value = 1
+  showQr.value = false
   if (fileInput.value) fileInput.value.value = ''
+}
+
+// Generate thumbnail from image file
+function generateThumbnail(file) {
+  return new Promise((resolve) => {
+    const reader = new FileReader()
+    reader.onload = (e) => {
+      const img = new Image()
+      img.onload = () => {
+        const canvas = document.createElement('canvas')
+        const ctx = canvas.getContext('2d')
+        
+        // Calculate new dimensions (max 300px)
+        const maxDim = 300
+        let width = img.width
+        let height = img.height
+        
+        if (width > height) {
+          if (width > maxDim) {
+            height *= maxDim / width
+            width = maxDim
+          }
+        } else {
+          if (height > maxDim) {
+            width *= maxDim / height
+            height = maxDim
+          }
+        }
+        
+        canvas.width = width
+        canvas.height = height
+        
+        // Draw to canvas
+        ctx.drawImage(img, 0, 0, width, height)
+        
+        // Export as blob
+        canvas.toBlob((blob) => {
+          resolve(blob)
+        }, 'image/jpeg', 0.7)
+      }
+      img.onerror = () => resolve(null)
+      img.src = e.target.result
+    }
+    reader.onerror = () => resolve(null)
+    reader.readAsDataURL(file)
+  })
 }
 </script>
 
@@ -602,5 +758,45 @@ function reset() {
   background: var(--accent-gold);
   border-color: var(--accent-gold);
   color: var(--bg-primary);
+}
+
+/* QR Code Section */
+.qr-section {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1rem;
+  width: 100%;
+  margin-top: 1rem;
+}
+
+.qr-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: none;
+  border: none;
+  color: var(--accent-gold);
+  font-size: 0.9rem;
+  cursor: pointer;
+  padding: 0.5rem;
+  border-radius: var(--radius-sm);
+  transition: all 0.2s ease;
+}
+
+.qr-toggle:hover {
+  background: rgba(255, 215, 0, 0.1);
+}
+
+.qr-container {
+  padding: 1rem;
+  background: white;
+  border-radius: var(--radius-md);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
+}
+
+.qr-container canvas {
+  display: block;
+  max-width: 100%;
 }
 </style>
