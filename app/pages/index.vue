@@ -247,14 +247,41 @@
       </div>
     </div>
 
+    <!-- Recent Uploads History -->
+    <div v-if="history.length > 0" class="history-card mt-8 fade-in">
+      <div class="history-header">
+        <h3>Recent Uploads</h3>
+        <button class="btn-text text-sm" @click="clearHistory">Clear</button>
+      </div>
+      
+      <div class="history-list">
+        <div v-for="item in history" :key="item.id" class="history-item">
+          <div class="history-info">
+            <span class="history-name">{{ item.name }}</span>
+            <span class="history-meta">{{ formatSize(item.size) }} • {{ new Date(item.date).toLocaleDateString() }}</span>
+          </div>
+          <div class="history-actions">
+            <button class="btn-icon-sm" @click="copyHistoryLink(item.url)" title="Copy Link">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <footer class="footer">
       <p class="text-muted">Files are encrypted and automatically deleted after download or 24 hours.</p>
+      <div class="mt-4">
+        <NuxtLink to="/dashboard" class="footer-link-sm">Manage Your Drops</NuxtLink>
+      </div>
     </footer>
   </div>
 </template>
 
 <script setup>
-import { useClipboard } from '@vueuse/core'
+import { useClipboard, useLocalStorage } from '@vueuse/core'
 import QRCode from 'qrcode'
 import JSZip from 'jszip'
 import { 
@@ -264,7 +291,8 @@ import {
   deriveKeyFromPassword,
   generateSalt,
   saltToBase64,
-  combineKeys
+  combineKeys,
+  generateThumbnail
 } from '~/utils/crypto'
 
 // State
@@ -447,14 +475,48 @@ async function startEncryptAndUpload() {
     statusText.value = 'Done!'
     
     // Step 5: Create share URL with encryption key in fragment
-    shareUrl.value = `${window.location.origin}/d/${data.id}#${keyBase64}`
+    const fullShareUrl = `${window.location.origin}/d/${data.id}#${keyBase64}`
+    shareUrl.value = fullShareUrl
     state.value = 'success'
+    
+    // Add to local history
+    addToHistory({
+      id: data.id,
+      name: fileToEncrypt.name,
+      date: new Date().toISOString(),
+      url: fullShareUrl,
+      size: fileToEncrypt.size,
+      expiresAt: data.expiresAt,
+      deleteToken: data.deleteToken
+    })
     
   } catch (err) {
     console.error('Upload error:', err)
     state.value = 'error'
     errorMessage.value = err.message || 'Something went wrong. Please try again.'
   }
+}
+
+// History Management
+const history = useLocalStorage('drop-history', [])
+
+function addToHistory(item) {
+  // Add to beginning of array
+  history.value.unshift(item)
+  // Keep only last 10 items
+  if (history.value.length > 10) {
+    history.value = history.value.slice(0, 10)
+  }
+}
+
+function clearHistory() {
+  if (confirm('Clear upload history?')) {
+    history.value = []
+  }
+}
+
+function copyHistoryLink(url) {
+  copy(url)
 }
 
 // Copy link
@@ -503,51 +565,7 @@ function reset() {
   if (fileInput.value) fileInput.value.value = ''
 }
 
-// Generate thumbnail from image file
-function generateThumbnail(file) {
-  return new Promise((resolve) => {
-    const reader = new FileReader()
-    reader.onload = (e) => {
-      const img = new Image()
-      img.onload = () => {
-        const canvas = document.createElement('canvas')
-        const ctx = canvas.getContext('2d')
-        
-        // Calculate new dimensions (max 300px)
-        const maxDim = 300
-        let width = img.width
-        let height = img.height
-        
-        if (width > height) {
-          if (width > maxDim) {
-            height *= maxDim / width
-            width = maxDim
-          }
-        } else {
-          if (height > maxDim) {
-            width *= maxDim / height
-            height = maxDim
-          }
-        }
-        
-        canvas.width = width
-        canvas.height = height
-        
-        // Draw to canvas
-        ctx.drawImage(img, 0, 0, width, height)
-        
-        // Export as blob
-        canvas.toBlob((blob) => {
-          resolve(blob)
-        }, 'image/jpeg', 0.7)
-      }
-      img.onerror = () => resolve(null)
-      img.src = e.target.result
-    }
-    reader.onerror = () => resolve(null)
-    reader.readAsDataURL(file)
-  })
-}
+
 </script>
 
 <style scoped>
@@ -798,5 +816,99 @@ function generateThumbnail(file) {
 .qr-container canvas {
   display: block;
   max-width: 100%;
+}
+
+.history-card {
+  width: 100%;
+  max-width: 440px;
+  margin-top: 2rem;
+  padding: 1.5rem;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+}
+
+.history-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1rem;
+}
+
+.history-header h3 {
+  font-size: 1rem;
+  font-weight: 600;
+  margin: 0;
+}
+
+.history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.history-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.75rem;
+  background: var(--bg-tertiary);
+  border-radius: var(--radius-md);
+  transition: all 0.2s;
+}
+
+.history-item:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.history-info {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.history-name {
+  font-size: 0.9rem;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.history-meta {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.history-actions {
+  margin-left: 0.5rem;
+}
+
+.btn-icon-sm {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0.4rem;
+  border-radius: var(--radius-md);
+  color: var(--text-muted);
+  transition: all 0.2s;
+}
+
+.btn-icon-sm:hover {
+  background: rgba(212, 175, 55, 0.1);
+  color: var(--accent-gold);
+}
+
+.btn-text {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  transition: color 0.2s;
+}
+
+.btn-text:hover {
+  color: var(--text-primary);
 }
 </style>

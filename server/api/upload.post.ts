@@ -56,6 +56,7 @@ export default defineEventHandler(async (event) => {
     
     // Generate unique ID for this file
     const fileId = randomUUID()
+    const deleteToken = randomUUID()
     const storagePath = `drops/${fileId}`
     
     // Check for thumbnail
@@ -110,7 +111,8 @@ export default defineEventHandler(async (event) => {
         expires_at: expiresAt.toISOString(),
         is_password_protected: isPasswordProtected,
         password_salt: passwordSalt,
-        has_preview: hasPreview
+        has_preview: hasPreview,
+        delete_token: deleteToken
       })
     
     if (dbError) {
@@ -133,7 +135,8 @@ export default defineEventHandler(async (event) => {
       id: fileId,
       name: originalName,
       size: originalSize,
-      expiresAt: expiresAt.toISOString()
+      expiresAt: expiresAt.toISOString(),
+      deleteToken: deleteToken
     }
     
   } catch (err) {

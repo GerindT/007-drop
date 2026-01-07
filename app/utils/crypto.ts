@@ -169,3 +169,54 @@ export async function combineKeys(
     ['encrypt', 'decrypt']
   )
 }
+
+// Generate thumbnail from image file
+export function generateThumbnail(file: File): Promise<Blob | null> {
+  return new Promise((resolve) => {
+    const reader = new FileReader()
+    reader.onload = (e) => {
+      const img = new Image()
+      img.onload = () => {
+        const canvas = document.createElement('canvas')
+        const ctx = canvas.getContext('2d')
+        
+        if (!ctx) {
+          resolve(null)
+          return
+        }
+        
+        // Calculate new dimensions (max 300px)
+        const maxDim = 300
+        let width = img.width
+        let height = img.height
+        
+        if (width > height) {
+          if (width > maxDim) {
+            height *= maxDim / width
+            width = maxDim
+          }
+        } else {
+          if (height > maxDim) {
+            width *= maxDim / height
+            height = maxDim
+          }
+        }
+        
+        canvas.width = width
+        canvas.height = height
+        
+        // Draw to canvas
+        ctx.drawImage(img, 0, 0, width, height)
+        
+        // Export as blob
+        canvas.toBlob((blob) => {
+          resolve(blob)
+        }, 'image/jpeg', 0.7)
+      }
+      img.onerror = () => resolve(null)
+      img.src = e.target.result as string
+    }
+    reader.onerror = () => resolve(null)
+    reader.readAsDataURL(file)
+  })
+}
