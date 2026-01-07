@@ -38,8 +38,8 @@ export default defineEventHandler(async (event) => {
       })
     }
     
-    // Check if download limit reached
-    if (file.download_count >= file.download_limit) {
+    // Check if download limit reached (skip if unlimited = 0)
+    if (file.download_limit > 0 && file.download_count >= file.download_limit) {
       throw createError({
         statusCode: 410,
         message: 'Download limit reached'
@@ -52,7 +52,12 @@ export default defineEventHandler(async (event) => {
       size: file.file_size,
       mimeType: file.mime_type,
       expiresAt: file.expires_at,
-      downloadsRemaining: file.download_limit - file.download_count
+      downloadLimit: file.download_limit,
+      downloadCount: file.download_count,
+      downloadsRemaining: file.download_limit === 0 ? -1 : file.download_limit - file.download_count,
+      isUnlimited: file.download_limit === 0,
+      isPasswordProtected: file.is_password_protected || false,
+      passwordSalt: file.password_salt || null
     }
     
   } catch (err) {

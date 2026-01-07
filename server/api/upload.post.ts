@@ -29,11 +29,21 @@ export default defineEventHandler(async (event) => {
     const originalSizeField = formData.find(field => field.name === 'originalSize')
     const originalTypeField = formData.find(field => field.name === 'originalType')
     
+    // Check for password protection fields
+    const isPasswordProtectedField = formData.find(field => field.name === 'isPasswordProtected')
+    const passwordSaltField = formData.find(field => field.name === 'passwordSalt')
+    
+    // Check for download limit (0 = unlimited)
+    const downloadLimitField = formData.find(field => field.name === 'downloadLimit')
+    
     // Use original metadata if provided, otherwise fall back to file field values
     const originalName = originalNameField?.data?.toString() || fileField.filename || 'untitled'
     const mimeType = originalTypeField?.data?.toString() || fileField.type || 'application/octet-stream'
     const originalSize = originalSizeField ? parseInt(originalSizeField.data.toString()) : fileField.data.length
     const encryptedSize = fileField.data.length
+    const isPasswordProtected = isPasswordProtectedField?.data?.toString() === 'true'
+    const passwordSalt = passwordSaltField?.data?.toString() || null
+    const downloadLimit = downloadLimitField ? parseInt(downloadLimitField.data.toString()) : 1
     
     // Validate file size (50MB max)
     const maxSize = 50 * 1024 * 1024
@@ -75,9 +85,11 @@ export default defineEventHandler(async (event) => {
         storage_path: storagePath,
         file_size: originalSize,
         mime_type: mimeType,
-        download_limit: 1,
+        download_limit: downloadLimit, // 0 = unlimited
         download_count: 0,
-        expires_at: expiresAt.toISOString()
+        expires_at: expiresAt.toISOString(),
+        is_password_protected: isPasswordProtected,
+        password_salt: passwordSalt
       })
     
     if (dbError) {
@@ -93,7 +105,7 @@ export default defineEventHandler(async (event) => {
     return {
       id: fileId,
       name: originalName,
-      size: fileSize,
+      size: originalSize,
       expiresAt: expiresAt.toISOString()
     }
     

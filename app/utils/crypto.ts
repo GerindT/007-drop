@@ -90,3 +90,82 @@ export async function decryptFile(
   
   return new Blob([decryptedBuffer], { type: mimeType })
 }
+
+// ============================================
+// PASSWORD PROTECTION UTILITIES
+// ============================================
+
+// Derive a key from password using PBKDF2
+export async function deriveKeyFromPassword(
+  password: string,
+  salt: Uint8Array
+): Promise<CryptoKey> {
+  // Convert password to key material
+  const encoder = new TextEncoder()
+  const passwordBuffer = encoder.encode(password)
+  
+  const keyMaterial = await crypto.subtle.importKey(
+    'raw',
+    passwordBuffer,
+    'PBKDF2',
+    false,
+    ['deriveBits', 'deriveKey']
+  )
+  
+  // Derive AES key from password
+  return await crypto.subtle.deriveKey(
+    {
+      name: 'PBKDF2',
+      salt: salt,
+      iterations: 100000,
+      hash: 'SHA-256'
+    },
+    keyMaterial,
+    { name: 'AES-GCM', length: 256 },
+    true,
+    ['encrypt', 'decrypt']
+  )
+}
+
+// Generate a random salt for password derivation
+export function generateSalt(): Uint8Array {
+  return crypto.getRandomValues(new Uint8Array(16))
+}
+
+// Convert salt to base64
+export function saltToBase64(salt: Uint8Array): string {
+  return btoa(String.fromCharCode(...salt))
+}
+
+// Convert base64 to salt
+export function base64ToSalt(base64: string): Uint8Array {
+  const binaryString = atob(base64)
+  const bytes = new Uint8Array(binaryString.length)
+  for (let i = 0; i < binaryString.length; i++) {
+    bytes[i] = binaryString.charCodeAt(i)
+  }
+  return bytes
+}
+
+// Combine two keys using XOR (for password + URL key)
+export async function combineKeys(
+  key1: CryptoKey,
+  key2: CryptoKey
+): Promise<CryptoKey> {
+  const raw1 = new Uint8Array(await crypto.subtle.exportKey('raw', key1))
+  const raw2 = new Uint8Array(await crypto.subtle.exportKey('raw', key2))
+  
+  // XOR the two keys
+  const combined = new Uint8Array(raw1.length)
+  for (let i = 0; i < raw1.length; i++) {
+    combined[i] = raw1[i] ^ raw2[i]
+  }
+  
+  return await crypto.subtle.importKey(
+    'raw',
+    combined,
+    { name: 'AES-GCM', length: 256 },
+    true,
+    ['encrypt', 'decrypt']
+  )
+}

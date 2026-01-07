@@ -48,6 +48,79 @@
         />
       </div>
 
+      <!-- Ready State - File selected, optional password -->
+      <div v-else-if="state === 'ready'" class="upload-content">
+        <div class="file-ready-info">
+          <div class="file-icon">
+            <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/>
+              <path d="M14 2v4a2 2 0 0 0 2 2h4"/>
+            </svg>
+          </div>
+          <div class="file-details">
+            <p class="file-name">{{ selectedFile?.name }}</p>
+            <p class="file-size text-muted">{{ formatSize(selectedFile?.size || 0) }}</p>
+          </div>
+          <button class="btn btn-icon btn-secondary" @click="reset" title="Remove file">
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="18" x2="6" y1="6" y2="18"/><line x1="6" x2="18" y1="6" y2="18"/>
+            </svg>
+          </button>
+        </div>
+
+        <!-- Optional Password -->
+        <div class="password-section">
+          <label class="password-label">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect width="18" height="11" x="3" y="11" rx="2" ry="2"/>
+              <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+            </svg>
+            Password Protection (optional)
+          </label>
+          <input 
+            v-model="password"
+            type="password"
+            class="input"
+            placeholder="Leave empty for no password"
+          />
+          <p class="password-hint text-muted">
+            Recipient will need this password to decrypt the file
+          </p>
+        </div>
+
+        <!-- Download Limit -->
+        <div class="download-limit-section">
+          <label class="option-label">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+              <polyline points="7 10 12 15 17 10"/>
+              <line x1="12" x2="12" y1="15" y2="3"/>
+            </svg>
+            Download Limit
+          </label>
+          <div class="limit-options">
+            <button 
+              v-for="option in downloadLimitOptions" 
+              :key="option.value"
+              class="limit-btn"
+              :class="{ active: downloadLimit === option.value }"
+              @click="downloadLimit = option.value"
+            >
+              {{ option.label }}
+            </button>
+          </div>
+        </div>
+
+        <button class="btn btn-primary w-full mt-4" @click="startEncryptAndUpload">
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+            <polyline points="17 8 12 3 7 8"/>
+            <line x1="12" x2="12" y1="3" y2="15"/>
+          </svg>
+          Encrypt & Upload
+        </button>
+      </div>
+
       <!-- Uploading State -->
       <div v-else-if="state === 'uploading'" class="upload-content">
         <div class="uploading-info">
@@ -143,10 +216,18 @@
 
 <script setup>
 import { useClipboard } from '@vueuse/core'
-import { generateKey, keyToBase64, encryptFile } from '~/utils/crypto'
+import { 
+  generateKey, 
+  keyToBase64, 
+  encryptFile,
+  deriveKeyFromPassword,
+  generateSalt,
+  saltToBase64,
+  combineKeys
+} from '~/utils/crypto'
 
 // State
-const state = ref('idle') // idle | encrypting | uploading | success | error
+const state = ref('idle') // idle | ready | uploading | success | error
 const isDragging = ref(false)
 const selectedFile = ref(null)
 const uploadProgress = ref(0)
@@ -154,6 +235,16 @@ const shareUrl = ref('')
 const errorMessage = ref('')
 const fileInput = ref(null)
 const statusText = ref('')
+const password = ref('')
+const downloadLimit = ref(1)
+
+// Download limit options
+const downloadLimitOptions = [
+  { value: 1, label: '1' },
+  { value: 5, label: '5' },
+  { value: 10, label: '10' },
+  { value: 0, label: '∞' }
+]
 
 // Clipboard
 const { copy, copied } = useClipboard({ source: shareUrl })
@@ -172,21 +263,21 @@ function openFilePicker() {
   fileInput.value?.click()
 }
 
-// Handle file selection
+// Handle file selection - go to ready state for password input
 function handleFileSelect(event) {
   const file = event.target.files?.[0]
-  if (file) startUpload(file)
+  if (file) selectFile(file)
 }
 
 // Handle drop
 function handleDrop(event) {
   isDragging.value = false
   const file = event.dataTransfer.files?.[0]
-  if (file) startUpload(file)
+  if (file) selectFile(file)
 }
 
-// Start upload with encryption
-async function startUpload(file) {
+// Select file and show ready state
+function selectFile(file) {
   // Validate file size (50MB max)
   const maxSize = 50 * 1024 * 1024
   if (file.size > maxSize) {
@@ -196,14 +287,36 @@ async function startUpload(file) {
   }
   
   selectedFile.value = file
+  password.value = ''
+  state.value = 'ready'
+}
+
+// Start encrypt and upload
+async function startEncryptAndUpload() {
+  if (!selectedFile.value) return
+  
+  const file = selectedFile.value
   state.value = 'uploading'
   uploadProgress.value = 0
   statusText.value = 'Generating encryption key...'
   
   try {
     // Step 1: Generate encryption key
-    const key = await generateKey()
-    const keyBase64 = await keyToBase64(key)
+    let key = await generateKey()
+    let keyBase64 = await keyToBase64(key)
+    let salt = null
+    let saltBase64 = null
+    
+    // Step 1b: If password provided, combine with password-derived key
+    if (password.value) {
+      statusText.value = 'Deriving key from password...'
+      uploadProgress.value = 5
+      
+      salt = generateSalt()
+      saltBase64 = saltToBase64(salt)
+      const passwordKey = await deriveKeyFromPassword(password.value, salt)
+      key = await combineKeys(key, passwordKey)
+    }
     
     uploadProgress.value = 10
     statusText.value = 'Encrypting file...'
@@ -219,11 +332,19 @@ async function startUpload(file) {
     
     // Create FormData with encrypted file
     const formData = new FormData()
-    // Keep original filename for display, but content is encrypted
     formData.append('file', encryptedBlob, file.name + '.encrypted')
     formData.append('originalName', file.name)
     formData.append('originalSize', file.size.toString())
     formData.append('originalType', file.type)
+    
+    // Add password protection flag and salt
+    if (password.value && saltBase64) {
+      formData.append('isPasswordProtected', 'true')
+      formData.append('passwordSalt', saltBase64)
+    }
+    
+    // Add download limit (0 = unlimited)
+    formData.append('downloadLimit', downloadLimit.value.toString())
     
     // Step 4: Upload encrypted blob via API
     const response = await fetch('/api/upload', {
@@ -244,7 +365,6 @@ async function startUpload(file) {
     statusText.value = 'Done!'
     
     // Step 5: Create share URL with encryption key in fragment
-    // The # fragment is NEVER sent to the server - only accessible client-side
     shareUrl.value = `${window.location.origin}/d/${data.id}#${keyBase64}`
     state.value = 'success'
     
@@ -268,6 +388,8 @@ function reset() {
   shareUrl.value = ''
   errorMessage.value = ''
   statusText.value = ''
+  password.value = ''
+  downloadLimit.value = 1
   if (fileInput.value) fileInput.value.value = ''
 }
 </script>
@@ -402,5 +524,83 @@ function reset() {
   margin-top: 2rem;
   text-align: center;
   font-size: 0.875rem;
+}
+
+/* File Ready State */
+.file-ready-info {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 1rem;
+  background: var(--bg-tertiary);
+  border-radius: var(--radius-md);
+  margin-bottom: 1.5rem;
+}
+
+/* Password Section */
+.password-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.password-label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.password-hint {
+  font-size: 0.8rem;
+  margin-top: 0.25rem;
+}
+
+/* Download Limit Section */
+.download-limit-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-top: 1rem;
+}
+
+.option-label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.limit-options {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.limit-btn {
+  flex: 1;
+  padding: 0.6rem 1rem;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.limit-btn:hover {
+  border-color: var(--accent-gold);
+  color: var(--text-primary);
+}
+
+.limit-btn.active {
+  background: var(--accent-gold);
+  border-color: var(--accent-gold);
+  color: var(--bg-primary);
 }
 </style>

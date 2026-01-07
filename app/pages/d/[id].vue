@@ -28,23 +28,47 @@
         <div class="badges mt-3 mb-4">
           <span class="badge badge-warning">
             <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10"/>
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+              <polyline points="7 10 12 15 17 10"/>
+              <line x1="12" x2="12" y1="15" y2="3"/>
             </svg>
-            One-time download
+            {{ fileInfo?.isUnlimited ? 'Unlimited downloads' : `${fileInfo?.downloadsRemaining} download${fileInfo?.downloadsRemaining === 1 ? '' : 's'} left` }}
           </span>
+          <span v-if="fileInfo?.isPasswordProtected" class="badge badge-gold">
+            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect width="18" height="11" x="3" y="11" rx="2" ry="2"/>
+              <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+            </svg>
+            Password Protected
+          </span>
+        </div>
+        
+        <!-- Password Input (if protected) -->
+        <div v-if="fileInfo?.isPasswordProtected" class="password-section mb-4">
+          <input 
+            v-model="password"
+            type="password"
+            class="input"
+            placeholder="Enter password to decrypt"
+          />
+          <p v-if="passwordError" class="password-error text-error">{{ passwordError }}</p>
         </div>
         
         <p class="warning-text text-muted mb-4">
           ⚠️ This file will be permanently deleted after you download it.
         </p>
         
-        <button class="btn btn-primary w-full" @click="download" :disabled="downloading">
+        <button 
+          class="btn btn-primary w-full" 
+          @click="download" 
+          :disabled="downloading || (fileInfo?.isPasswordProtected && !password)"
+        >
           <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
             <polyline points="7 10 12 15 17 10"/>
             <line x1="12" x2="12" y1="15" y2="3"/>
           </svg>
-          {{ downloading ? 'Downloading...' : 'Download File' }}
+          {{ downloading ? statusText : 'Download & Decrypt' }}
         </button>
       </div>
 
@@ -96,6 +120,30 @@
           Upload Another File
         </NuxtLink>
       </div>
+
+      <!-- No Key / Invalid Key State -->
+      <div v-else-if="status === 'nokey'" class="download-content text-center">
+        <div class="expired-icon">
+          <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect width="18" height="11" x="3" y="11" rx="2" ry="2"/>
+            <path d="M7 11V7a5 5 0 0 1 9.9-1"/>
+          </svg>
+        </div>
+        
+        <h2>Decryption Key Missing</h2>
+        <p class="text-muted mb-4">
+          This file is encrypted and requires the complete link with the decryption key.
+        </p>
+        
+        <NuxtLink to="/" class="btn btn-primary">
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+            <polyline points="17 8 12 3 7 8"/>
+            <line x1="12" x2="12" y1="3" y2="15"/>
+          </svg>
+          Upload a New File
+        </NuxtLink>
+      </div>
     </div>
 
     <footer class="footer">
@@ -107,13 +155,19 @@
 </template>
 
 <script setup>
+import { base64ToKey, decryptFile, deriveKeyFromPassword, base64ToSalt, combineKeys } from '~/utils/crypto'
+
 const route = useRoute()
 const fileId = route.params.id
 
 // State
-const status = ref('loading') // loading | ready | expired | downloaded
+const status = ref('loading') // loading | ready | expired | downloaded | nokey | decrypting
 const fileInfo = ref(null)
 const downloading = ref(false)
+const encryptionKey = ref(null)
+const statusText = ref('')
+const password = ref('')
+const passwordError = ref('')
 
 // Format file size
 function formatSize(bytes) {
@@ -126,6 +180,23 @@ function formatSize(bytes) {
 
 // Fetch file info on mount
 onMounted(async () => {
+  // Extract encryption key from URL hash
+  const hash = window.location.hash.slice(1) // Remove the # prefix
+  
+  if (!hash) {
+    status.value = 'nokey'
+    return
+  }
+  
+  try {
+    // Parse the encryption key
+    encryptionKey.value = await base64ToKey(hash)
+  } catch (err) {
+    console.error('Invalid encryption key:', err)
+    status.value = 'nokey'
+    return
+  }
+  
   try {
     const response = await fetch(`/api/file/${fileId}`)
     
@@ -142,11 +213,34 @@ onMounted(async () => {
   }
 })
 
-// Download file
+// Download and decrypt file
 async function download() {
   downloading.value = true
+  passwordError.value = ''
+  statusText.value = 'Fetching encrypted file...'
   
   try {
+    // Prepare decryption key (combine with password if protected)
+    let decryptKey = encryptionKey.value
+    
+    if (fileInfo.value?.isPasswordProtected) {
+      if (!password.value) {
+        passwordError.value = 'Password is required'
+        downloading.value = false
+        return
+      }
+      
+      statusText.value = 'Deriving key from password...'
+      
+      // Get salt and derive password key
+      const salt = base64ToSalt(fileInfo.value.passwordSalt)
+      const passwordKey = await deriveKeyFromPassword(password.value, salt)
+      
+      // Combine URL key with password key
+      decryptKey = await combineKeys(encryptionKey.value, passwordKey)
+    }
+    
+    // Get download URL from API
     const response = await fetch(`/api/download/${fileId}`)
     
     if (!response.ok) {
@@ -156,19 +250,54 @@ async function download() {
     
     const data = await response.json()
     
-    // Open download URL
+    statusText.value = 'Downloading encrypted file...'
+    
+    // Fetch the actual encrypted file
+    const fileResponse = await fetch(data.url)
+    if (!fileResponse.ok) {
+      throw new Error('Failed to download file')
+    }
+    
+    const encryptedData = await fileResponse.arrayBuffer()
+    
+    statusText.value = 'Decrypting file...'
+    
+    // Decrypt the file in browser
+    const decryptedBlob = await decryptFile(
+      encryptedData,
+      decryptKey,
+      fileInfo.value?.mimeType || 'application/octet-stream'
+    )
+    
+    statusText.value = 'Preparing download...'
+    
+    // Create download link for decrypted file
+    const url = URL.createObjectURL(decryptedBlob)
     const link = document.createElement('a')
-    link.href = data.url
+    link.href = url
     link.download = fileInfo.value?.name || 'download'
     document.body.appendChild(link)
     link.click()
     document.body.removeChild(link)
     
+    // Clean up
+    URL.revokeObjectURL(url)
+    
     // Show success
     status.value = 'downloaded'
   } catch (err) {
     console.error('Download error:', err)
-    status.value = 'expired'
+    if (err.message?.includes('decrypt') || err.name === 'OperationError') {
+      // Decryption failed - likely wrong password
+      if (fileInfo.value?.isPasswordProtected) {
+        passwordError.value = 'Incorrect password'
+        downloading.value = false
+        return
+      }
+      status.value = 'nokey'
+    } else {
+      status.value = 'expired'
+    }
   } finally {
     downloading.value = false
   }

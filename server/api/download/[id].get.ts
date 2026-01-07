@@ -38,8 +38,8 @@ export default defineEventHandler(async (event) => {
       })
     }
     
-    // Check if download limit reached
-    if (file.download_count >= file.download_limit) {
+    // Check if download limit reached (skip if unlimited = 0)
+    if (file.download_limit > 0 && file.download_count >= file.download_limit) {
       // Clean up file
       await supabase.storage.from('drops').remove([file.storage_path])
       await supabase.from('files').delete().eq('id', fileId)
@@ -75,8 +75,8 @@ export default defineEventHandler(async (event) => {
       })
     }
     
-    // If this was the last download, delete the file
-    if (file.download_count + 1 >= file.download_limit) {
+    // If this was the last download (and not unlimited), delete the file
+    if (file.download_limit > 0 && file.download_count + 1 >= file.download_limit) {
       // Schedule deletion after a short delay to allow download
       setTimeout(async () => {
         try {
